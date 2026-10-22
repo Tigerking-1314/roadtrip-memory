@@ -1,18 +1,18 @@
-"""your-first-memory — a memory for a model that has none.
+"""roadtrip-memory — a memory for the places worth stopping again.
 
-Last week's instrument gave your model a sense of time. But ask it
-"what did we say last Tuesday?" and it can only guess: nothing survives
-the end of a conversation. This server is the smallest honest fix —
-a table, two tools, and suddenly there is a *record*. The pattern
-generalizes to anything worth keeping. See docs/adr/ for every choice
-made here — each one records a real decision with the road not taken.
+Built on your-first-memory: one table, two tools, and the places you
+loved on the road survive the end of the conversation. See docs/adr/
+for every choice made here — each one records a real decision with the
+road not taken.
 """
 import os
 from mcp.server.fastmcp import FastMCP
 
 import psycopg
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+# .strip(): a value pasted into a dashboard can carry a stray newline or
+# space, which libpq would treat as part of the URL (ADR-0005).
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 
 mcp = FastMCP(
     "your-first-memory",
@@ -21,11 +21,11 @@ mcp = FastMCP(
 )
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS quotes (
+CREATE TABLE IF NOT EXISTS favorites (
     id          SERIAL PRIMARY KEY,
-    quote       TEXT NOT NULL,
-    who         TEXT,                          -- optional: unattributed quotes are allowed (ADR-0004)
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    place       TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()  -- TIMESTAMPTZ, never ambiguous about its timezone (ADR-0004)
 );
 """
 
@@ -49,31 +49,29 @@ def db():
 
 
 @mcp.tool()
-def record_quote(quote: str, who: str = "") -> str:
-    """Save a quote worth keeping. `who` is optional — a quote you can't
-    place is still worth remembering."""
+def save_favorite(place: str, reason: str) -> str:
+    """Save a road-trip favorite: the place, and why it was worth it."""
     with db() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO quotes (quote, who) VALUES (%s, %s) RETURNING id, recorded_at",
-            (quote, who or None),
+            "INSERT INTO favorites (place, reason) VALUES (%s, %s) RETURNING id, created_at",
+            (place, reason),
         )
-        qid, ts = cur.fetchone()
+        fid, ts = cur.fetchone()
         conn.commit()
-    return f"Recorded as quote #{qid} at {ts.isoformat()}."
+    return f"Saved as favorite #{fid} at {ts.isoformat()}."
 
 
 @mcp.tool()
-def list_quotes() -> str:
-    """Every quote in the memory, oldest first."""
+def list_favorites() -> str:
+    """Every favorite in the memory, oldest first."""
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, quote, who, recorded_at FROM quotes ORDER BY id")
+        cur.execute("SELECT id, place, reason, created_at FROM favorites ORDER BY id")
         rows = cur.fetchall()
     if not rows:
-        return "The memory is empty. Record something worth keeping."
+        return "No favorites yet. Save a place worth stopping again."
     lines = []
-    for qid, quote, who, ts in rows:
-        attribution = f" — {who}" if who else ""
-        lines.append(f'#{qid} ({ts:%Y-%m-%d %H:%M}): "{quote}"{attribution}')
+    for fid, place, reason, ts in rows:
+        lines.append(f"#{fid} ({ts:%Y-%m-%d %H:%M}): {place} — {reason}")
     return "\n".join(lines)
 
 
